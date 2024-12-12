@@ -9,7 +9,6 @@ use crate::args::Flags;
 use crate::args::InstallFlags;
 use crate::args::InstallFlagsGlobal;
 use crate::args::InstallFlagsLocal;
-use crate::args::InstallKind;
 use crate::args::TypeCheckMode;
 use crate::args::UninstallFlags;
 use crate::args::UninstallKind;
@@ -339,11 +338,11 @@ pub async fn install_command(
   flags: Arc<Flags>,
   install_flags: InstallFlags,
 ) -> Result<(), AnyError> {
-  match install_flags.kind {
-    InstallKind::Global(global_flags) => {
+  match install_flags {
+    InstallFlags::Global(global_flags) => {
       install_global(flags, global_flags).await
     }
-    InstallKind::Local(local_flags) => {
+    InstallFlags::Local(local_flags) => {
       if let InstallFlagsLocal::Add(add_flags) = &local_flags {
         check_if_installs_a_single_package_globally(Some(add_flags))?;
       }
@@ -359,6 +358,7 @@ async fn install_global(
   // ensure the module is cached
   let factory = CliFactory::from_flags(flags.clone());
 
+  let cli_options = factory.cli_options()?;
   let http_client = factory.http_client_provider();
   let deps_http_cache = factory.global_http_cache()?;
   let mut deps_file_fetcher = FileFetcher::new(
@@ -381,20 +381,22 @@ async fn install_global(
   ));
 
   let entry_text = install_flags_global.module_url.as_str();
-  let req = super::registry::AddRmPackageReq::parse(entry_text);
-
-  // found a package requirement but missing the prefix
-  if let Ok(Err(package_req)) = req {
-    if jsr_resolver.req_to_nv(&package_req).await.is_some() {
-      bail!(
-        "{entry_text} is missing a prefix. Did you mean `{}`?",
-        crate::colors::yellow(format!("deno install -g jsr:{package_req}"))
-      );
-    } else if npm_resolver.req_to_nv(&package_req).await.is_some() {
-      bail!(
-        "{entry_text} is missing a prefix. Did you mean `{}`?",
-        crate::colors::yellow(format!("deno install -g npm:{package_req}"))
-      );
+  if !cli_options.initial_cwd().join(entry_text).exists() {
+    // check for package requirement missing prefix
+    if let Ok(Err(package_req)) =
+      super::registry::AddRmPackageReq::parse(entry_text)
+    {
+      if jsr_resolver.req_to_nv(&package_req).await.is_some() {
+        bail!(
+          "{entry_text} is missing a prefix. Did you mean `{}`?",
+          crate::colors::yellow(format!("deno install -g jsr:{package_req}"))
+        );
+      } else if npm_resolver.req_to_nv(&package_req).await.is_some() {
+        bail!(
+          "{entry_text} is missing a prefix. Did you mean `{}`?",
+          crate::colors::yellow(format!("deno install -g npm:{package_req}"))
+        );
+      }
     }
   }
 
